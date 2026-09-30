@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Câu hỏi mang tính xã giao, chào hỏi hoặc ngoài phạm vi kiến thức mà trợ lý từ chối hợp lệ ("Tôi không tìm thấy thông tin trong tài liệu"). | Câu trả lời nghiệp vụ (chính sách đổi trả, bảo hành, giá) chứa thông tin bịa đặt/hallucination, sai lệch so với context tài liệu. | Siết chặt prompt (grounding instruction), hạ temperature = 0.0, thêm guardrail kiểm tra hallucination trước khi phản hồi. |
+| Answer Relevance | Câu hỏi mơ hồ hoặc quá ngắn, hệ thống trả lời chi tiết kèm hướng dẫn phân loại các trường hợp khiến tỷ lệ trùng lặp từ khóa loãng nhưng vẫn hữu ích. | Câu trả lời lạc đề (off-topic), trả lời lan man hoặc chuyển hướng sang vấn đề không liên quan đến thắc mắc của khách hàng. | Tối ưu hóa prompt để câu trả lời đi thẳng vào trọng tâm (direct answer first), kiểm tra prompt injection hoặc query rewriting. |
+| Context Recall | Câu hỏi đơn giản chỉ cần 1 ý nhỏ trong gold context, expected answer ngắn gọn hơn tài liệu nguồn và không yêu cầu trích xuất toàn bộ context. | Retriever bỏ sót hoàn toàn văn bản chính sách/evidence quan trọng, khiến Generator không có thông tin để trả lời đúng. | Nâng cấp retrieval: tăng Top-K, điều chỉnh chunk size/overlap, áp dụng Hybrid Search (Dense + BM25) hoặc Query Expansion. |
+| Context Precision | Hệ thống ưu tiên recall cao (Top-K lớn), chunk liên quan nằm ở rank 2 hoặc rank 3 thay vì rank 1 nhưng Generator vẫn tổng hợp chính xác. | Tài liệu liên quan quan trọng bị xếp ở rank rất thấp hoặc bị vùi lấp bởi các chunk rác (noise) ở đầu, làm giảm độ chính xác của câu trả lời. | Tích hợp module Re-ranking (Cross-Encoder / Cohere Rerank), cải thiện embedding model và tối ưu hóa semantic chunking. |
+| Completeness | Câu hỏi mở/đa khía cạnh, expected answer liệt kê toàn diện lý thuyết nhưng câu trả lời thực tế chỉ tập trung giải quyết tình huống phổ biến nhất. | Bỏ sót các điều kiện tiên quyết hoặc bước bắt buộc trong quy trình (ví dụ: thiếu thời hạn đổi trả 7 ngày, thiếu hóa đơn gốc). | Bổ sung checklist hướng dẫn cấu trúc câu trả lời vào prompt, áp dụng Chain-of-Thought hoặc self-verification trước khi trả lời. |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -47,14 +47,23 @@ Ba bias thường gặp:
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
 > *Câu trả lời:*
+> - **Condition 1 (Thứ tự gốc A-B):** Cung cấp cho LLM Judge cặp câu trả lời theo thứ tự [Answer A, Answer B] cùng prompt đánh giá so sánh. Ghi nhận phán quyết của Judge.
+> - **Condition 2 (Đảo thứ tự B-A):** Đảo ngược vị trí trình bày thành [Answer B, Answer A] với cùng prompt, tiêu chí đánh giá và context. Ghi nhận phán quyết của Judge.
+> - **Đo lường & Kết luận:** Tính tỷ lệ Judge chọn phương án ở vị trí số 1 trong cả 2 điều kiện. Nếu tỷ lệ chọn vị trí số 1 lệch đáng kể so với 50% (ví dụ > 65%) hoặc Judge đổi lựa chọn sang bất kỳ answer nào đứng trước, kết luận có Position Bias. Khắc phục bằng cách chạy cả 2 chiều (Swap Evaluation) rồi lấy điểm trung bình.
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
+> - **Bổ sung tiêu chí Conciseness (Súc tích & Trọng tâm):** Quy định rõ trong rubric trừ điểm các câu trả lời dài dòng, lặp từ, chèn câu đệm sáo rỗng hoặc lặp lại nguyên văn câu hỏi.
+> - **Chấm điểm theo Checklist ý chính (Key Information Elements):** Định nghĩa rubric dựa trên danh sách các thông tin cốt lõi bắt buộc phải có, mỗi ý tương ứng điểm số cụ thể thay vì đánh giá chất lượng tổng thể dựa trên cảm quan độ dài.
+> - **Ràng buộc giới hạn độ dài:** Đưa vào rubric quy chuẩn độ dài phù hợp (ví dụ: câu trả lời tối ưu trong khoảng 50–150 từ; nếu vượt quá 200 từ mà không có thông tin mới sẽ bị trừ 1 mức điểm).
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
-
 > *Câu trả lời:*
+> LLM Judge không có nhận thức thực tế và dễ mắc các thiên kiến cố hữu (positional, verbosity, self-preference, leniency/severity bias). Việc calibrate với tập nhãn do con người/chuyên gia thẩm định giúp:
+> 1. Đo lường mức độ đồng thuận và độ tương quan (Cohen's Kappa, Spearman/Pearson correlation) giữa LLM Judge và đánh giá của con người.
+> 2. Phát hiện các trường hợp Judge cho điểm bất hợp lý để tinh chỉnh system prompt, rubric tiêu chí và bổ sung few-shot calibration examples.
+> 3. Thiết lập ngưỡng tin cậy (threshold) chuẩn xác trước khi đưa LLM Judge vào làm quality gate tự động trong pipeline CI/CD.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +71,16 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | >= 0.85 | Trợ lý tư vấn khách hàng tuyệt đối không được hallucinate/bịa đặt thông tin hoặc chính sách của cửa hàng, tránh rủi ro pháp lý và giữ uy tín. |
+| Answer Relevance | >= 0.80 | Đảm bảo câu trả lời tập trung trực tiếp giải quyết câu hỏi của khách hàng, không trả lời lan man hoặc lạc đề. |
+| Completeness | >= 0.75 | Đảm bảo khách hàng nhận được đầy đủ các điều kiện, quy định và các bước thao tác cần thiết để tự giải quyết vấn đề. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+> - **Offline Evaluation:** Thực hiện trong môi trường phát triển (Dev) và quy trình CI/CD trước khi release (pre-deployment). Sử dụng Golden Dataset cố định để đo lường tự động, kiểm thử hồi quy (regression testing) và làm quality gate ngăn chặn bản build lỗi triển khai lên production.
+> - **Online Evaluation:** Thực hiện liên tục trên môi trường Production với lưu lượng người dùng thật. Giám sát các chỉ số ngầm và tín hiệu trực tiếp (thumbs up/down, tỷ lệ chuyển tiếp nhân viên hỗ trợ, CSAT, bounce rate) để phát hiện data drift hoặc suy giảm chất lượng vận hành.
+> - **Human Review:** Thực hiện định kỳ để audit chất lượng hệ thống, đánh giá chuyên sâu các ca điểm thấp (low confidence/outliers), phân tích root cause (5 Whys), calibrate LLM Judge và biên tập/làm giàu Golden Dataset.
 
 ---
 
