@@ -16,7 +16,11 @@ import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+try:
+    from datetime import UTC, datetime
+except ImportError:
+    from datetime import datetime, timezone
+    UTC = timezone.utc
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -250,20 +254,59 @@ class OpenAIGenerator:
             raise RuntimeError("OPENAI_API_KEY is missing from .env")
         if not self.model:
             raise RuntimeError("OPENAI_MODEL is missing from .env")
-        self.client = OpenAI(api_key=api_key)
+        base_url = os.getenv(
+            "OPENAI_BASE_URL",
+            "https://openrouter.ai/api/v1" if api_key.startswith("sk-or-") else None,
+        )
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.max_output_tokens = max_output_tokens
 
     def generate(self, prompt: str) -> str:
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            temperature=0,
-            max_output_tokens=self.max_output_tokens,
-        )
-        answer = response.output_text.strip()
-        if not answer:
-            raise RuntimeError("OpenAI returned an empty answer")
-        return answer
+        last_error = None
+        for attempt in range(5):
+            try:
+                # Use primary model, or fallback model if errors occur on OpenRouter
+                current_model = self.model
+                if attempt >= 1 and "openrouter.ai" in str(getattr(self.client, "base_url", "")):
+                    current_model = os.getenv("OPENAI_FALLBACK_MODEL", "openrouter/auto")
+
+                # OpenRouter and standard OpenAI chat completions
+                if hasattr(self.client, "chat") and hasattr(self.client.chat, "completions"):
+                    response = self.client.chat.completions.create(
+                        model=current_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0,
+                        max_tokens=self.max_output_tokens,
+                        timeout=30.0,
+                    )
+                    choice = response.choices[0]
+                    answer = (choice.message.content or "").strip()
+                    if not answer and hasattr(choice.message, "reasoning") and choice.message.reasoning:
+                        answer = choice.message.reasoning.strip()
+                    if answer:
+                        return answer
+
+                # OpenAI responses preview API fallback
+                if hasattr(self.client, "responses"):
+                    resp = self.client.responses.create(
+                        model=current_model,
+                        input=prompt,
+                        temperature=0,
+                        max_output_tokens=self.max_output_tokens,
+                        timeout=30.0,
+                    )
+                    answer = resp.output_text.strip()
+                    if answer:
+                        return answer
+
+                raise RuntimeError("Generator returned an empty answer")
+            except Exception as exc:
+                last_error = exc
+                if attempt < 4:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise
+        raise RuntimeError(f"Failed to generate answer: {last_error}")
 
 
 @dataclass(frozen=True)
@@ -406,6 +449,14 @@ def generate_actual_answers(
     )
 
     answers: list[dict[str, Any]] = []
+    cache_path = Path("artifacts/.cache_answers.json")
+    cache: dict[str, dict[str, Any]] = {}
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+
     for index, item in enumerate(questions, start=1):
         percentage = index / total
         completed_before = index - 1
@@ -414,6 +465,18 @@ def generate_actual_answers(
         question_preview = re.sub(r"\s+", " ", item["question"]).strip()
         if len(question_preview) > 58:
             question_preview = f"{question_preview[:55]}..."
+
+        cached_rec = cache.get(item["id"])
+        if cached_rec and cached_rec.get("question") == item["question"] and cached_rec.get("actual_answer"):
+            answers.append(cached_rec)
+            filled_after = round(20 * percentage)
+            bar_after = "#" * filled_after + "-" * (20 - filled_after)
+            notify(
+                f"[{bar_after}] {index:02d}/{total:02d} | {item['id']} CACHED "
+                f"({len(cached_rec.get('retrieved_contexts', []))} chunks)"
+            )
+            continue
+
         notify(
             f"[{bar_before}] {completed_before:02d}/{total:02d} | "
             f"{item['id']} generating: {question_preview}"
@@ -426,23 +489,28 @@ def generate_actual_answers(
             notify(f"FAILED at {item['id']}; stopping the run.")
             raise
 
-        answers.append(
-            {
-                "id": item["id"],
-                "question": item["question"],
-                "actual_answer": response.actual_answer,
-                "retrieved_contexts": [
-                    {
-                        "source_doc": chunk.source_doc,
-                        "chunk_id": chunk.chunk_id,
-                        "text": chunk.text,
-                        "score": round(chunk.score, 6),
-                    }
-                    for chunk in response.retrieved_chunks
-                ],
-                "error": None,
-            }
-        )
+        rec = {
+            "id": item["id"],
+            "question": item["question"],
+            "actual_answer": response.actual_answer,
+            "retrieved_contexts": [
+                {
+                    "source_doc": chunk.source_doc,
+                    "chunk_id": chunk.chunk_id,
+                    "text": chunk.text,
+                    "score": round(chunk.score, 6),
+                }
+                for chunk in response.retrieved_chunks
+            ],
+            "error": None,
+        }
+        answers.append(rec)
+        cache[item["id"]] = rec
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
         filled_after = round(20 * percentage)
         bar_after = "#" * filled_after + "-" * (20 - filled_after)
