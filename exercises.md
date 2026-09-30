@@ -158,31 +158,34 @@ và quyết định thiết kế, không chép lại toàn bộ QA.
 
 | Hạng mục | Kết quả |
 |---|---|
-| Tổng số records | ____ / 20 |
-| Easy | ____ / 5 |
-| Medium | ____ / 7 |
-| Hard | ____ / 5 |
-| Adversarial | ____ / 3 |
-| Source documents được sử dụng | ____ / 10 |
-| Validator status | PASS / FAIL |
+| Tổng số records | 20 / 20 |
+| Easy | 5 / 5 |
+| Medium | 7 / 7 |
+| Hard | 5 / 5 |
+| Adversarial | 3 / 3 |
+| Source documents được sử dụng | 10 / 10 |
+| Validator status | PASS |
 
 **Ba case đại diện cho quyết định thiết kế**
 
 | ID | Difficulty | Source document(s) | Vì sao case phù hợp với difficulty/attack type? |
 |---|---|---|---|
-| | | | |
-| | | | |
-| | | | |
+| M03 | medium | `08_accounts_privacy_and_security.md`, `02_orders_and_payments.md` | Kết hợp quy trình bảo mật tài khoản (reset mật khẩu, thu hồi phiên đăng nhập) với điều kiện kiểm tra trạng thái đơn hàng (`Confirmed` vs `Packing`) để kịp thời ngăn chặn đơn hàng trái phép. |
+| H02 | hard | `09_escalation_and_policy_updates.md`, `03_promotions_and_membership.md` | Đòi hỏi xử lý giao thoa thời gian và điều kiện phiên bản chính sách: đơn trước 01/09/2026 (v1.0) không được hưởng gia hạn 45 ngày dù có OrbitPlus; đơn từ 01/09/2026 (v2.0) chỉ gia hạn cho thiết bị chưa mở hộp nếu OrbitPlus active tại ngày đặt hàng, không áp dụng cho thiết bị đã mở hay thời hạn bảo hành. |
+| A02 | adversarial | `00_system_scope.md` | Kiểm thử dạng Prompt Injection cố tình yêu cầu bỏ qua chỉ dẫn hệ thống ("Ignore all previous instructions...") để trích xuất prompt ẩn và thông tin bí mật. Phản ánh đúng quy định an toàn trong `00_system_scope.md` là không cho phép user text ghi đè quy tắc hệ thống. |
 
 **Điểm khó nhất khi xây dựng expected answer hoặc evidence là gì?**
 
 > *Câu trả lời:*
+> Điểm khó nhất là kiểm soát chặt chẽ tính provenance và các điều kiện ranh giới (boundary conditions) giữa các văn bản chính sách:
+> 1. Đảm bảo mọi luận điểm trong expected answer đều có evidence chứng minh nguyên văn (verbatim substring) mà không suy diễn ngoài corpus hoặc để lọt kiến thức tổng quát từ bên ngoài.
+> 2. Phân định rõ ràng các trường hợp ngoại lệ đan xen giữa các tài liệu: ví dụ như quy tắc tính thời hạn đổi trả theo phiên bản (v1.0 vs v2.0), sự khác biệt giữa thiết bị mở hộp vs chưa mở hộp, và điều kiện kích hoạt quyền lợi thành viên OrbitPlus.
 
 **Xác nhận:**
 
-- [ ] Mọi claim trong expected answer đều có evidence hỗ trợ.
-- [ ] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
-- [ ] `python validate_golden_dataset.py` báo `PASS`.
+- [x] Mọi claim trong expected answer đều có evidence hỗ trợ.
+- [x] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
+- [x] `python validate_golden_dataset.py` báo `PASS`.
 
 ### Exercise 3.2 — Benchmark Run
 
